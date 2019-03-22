@@ -1,0 +1,142 @@
+apiVersion: apps/v1beta2
+kind: Deployment
+metadata:
+  name: {{ include "kafka-connect-helm.fullname" . }}
+  labels:
+    app: {{ include "kafka-connect-helm.fullname" . }}
+    app.kubernetes.io/name: {{ include "kafka-connect-helm.fullname" . }}
+    helm.sh/chart: {{ include "kafka-connect-helm.chart" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+  annotations:
+    kubernetes.io/change-cause: "{{ .Values.kafka_connect.image.repository }}:{{ .Values.kafka_connect.image.tag }}"
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy: {}
+  selector:
+    matchLabels:
+      app: {{ include "kafka-connect-helm.fullname" . }}
+      app.kubernetes.io/name: {{ include "kafka-connect-helm.fullname" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "kafka-connect-helm.fullname" . }}
+        app.kubernetes.io/name: {{ include "kafka-connect-helm.fullname" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- if and (.Values.datadog.enabled) (.Values.datadog.autodiscovery) }}
+      annotations:
+        #Logs
+        ad.datadoghq.com/{{ include "kafka-connect-helm.fullname" . }}.logs: '{{ toJson (fromYaml (tpl (.Files.Get "monitoring/custom_metrics.yaml") .)).logs }}'
+        #ad.datadoghq.com/dbcon-processor.check.id: dbcon-processor-${UUID}
+        # label for existing template on file
+        ad.datadoghq.com/{{ include "kafka-connect-helm.fullname" . }}.check_names: '["{{ include "kafka-connect-helm.fullname" . }}-{{- uuidv4 | trunc 5 -}}"]'  # becomes instance tag in datadog
+        ad.datadoghq.com/{{ include "kafka-connect-helm.fullname" . }}.init_configs: '[{{ toJson (fromYaml (tpl (.Files.Get "monitoring/custom_metrics.yaml") .)).init_config }}]'
+        ad.datadoghq.com/{{ include "kafka-connect-helm.fullname" . }}.instances: '{{ toJson (fromYaml (tpl (.Files.Get "monitoring/custom_metrics.yaml") .)).instances }}'
+    {{- end }}
+    spec:
+      volumes:
+      - name: logs
+        emptyDir: {}
+      - name: "{{ include "kafka-connect-helm.fullname" . }}-configmap"
+        configMap:
+          name: "{{ include "kafka-connect-helm.fullname" . }}-configmap"
+      containers:
+      {{- if and (.Values.datadog.enabled) (not .Values.datadog.autodiscovery) }}
+      # DATADOG
+      - name: datadog
+        #imagePullPolicy: Always
+        image: "{{ .Values.datadog.image.repository }}:{{ .Values.datadog.image.tag }}"
+        ports:
+          - containerPort: 8125
+            name: dogstatsdport
+            protocol: UDP
+          - containerPort: 8126
+            name: traceport
+            protocol: TCP
+        env:
+          - name: DD_LOGS_ENABLED
+            value: "true"
+          - name: DD_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: datadog-secret
+                key: DD_API_KEY
+          - name: KUBERNETES
+            value: "yes"
+          - name: DD_KUBERNETES_KUBELET_HOST
+            valueFrom:
+              fieldRef:
+                fieldPath: status.hostIP
+        resources:
+{{ toYaml .Values.datadog.resources | indent 12 }}
+        volumeMounts:
+          - name: logs
+            mountPath: /var/log/kafka
+          - name: "{{ include "kafka-connect-helm.fullname" . }}-configmap"
+            mountPath: "/etc/datadog-agent/conf.d/kafka.d/conf.yaml"
+            subPath: "custom_metrics.yaml"
+          - name: "{{ include "kafka-connect-helm.fullname" . }}-configmap"
+            mountPath: "/etc/datadog-agent/datadog.yaml"
+            subPath: "datadog.yaml"
+        livenessProbe:
+          exec:
+            command:
+            - ./probe.sh
+          initialDelaySeconds: 15
+          periodSeconds: 5
+      {{- end }}
+      - name: {{ include "kafka-connect-helm.fullname" . }}
+        image: "{{ .Values.kafka_connect.image.repository }}:{{ .Values.kafka_connect.image.tag }}"
+        imagePullPolicy: {{ .Values.kafka_connect.image.pullPolicy }}
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "python3 /usr/local/bin/taskchecker.py delete_config > /var/log/preStop.log"]
+        livenessProbe:
+          exec:
+            command: ["/bin/sh", "-c", "python3 /usr/local/bin/taskchecker.py check_tasks >> /var/log/taskchecker.log"]
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 60
+        ports:
+          - containerPort: 9999
+          - containerPort: 8083
+        volumeMounts:
+        - name: logs
+          mountPath: /var/log/kafka
+        - name: "{{ include "kafka-connect-helm.fullname" . }}-configmap"
+          mountPath: "/usr/local/bin/taskchecker.py"
+          subPath: "taskchecker.py"
+        env:
+          - name: ENV
+            value: {{ .Values.ENV }}
+          - name: CONNECT_BOOTSTRAP_SERVERS
+            value: {{ .Values.KAFKA_BROKERS }}
+          - name: CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL
+            value: {{ .Values.SCHEMA_REGISTRY_URL }}
+          - name: CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL
+            value: {{ .Values.SCHEMA_REGISTRY_URL }}
+          - name: CONNECT_ZOOKEEPER_CONNECT
+            value: {{ .Values.ZOOKEEPERS }}
+          - name: CONNECT_GROUP_ID
+            value: "{{ .Values.kafka_connect.CONNECT_GROUP_ID }}"
+{{- range $key, $val := .Values.kafka_connect }}
+{{- if kindIs "string" $val }}
+          - name: {{ $key }}
+            value: {{ $val | quote }}
+{{- end}}
+{{- end}}
+          - name: CONNECT_REST_ADVERTISED_HOST_NAME
+            value: "{{ include "kafka-connect-helm.fullname" . }}"
+          - name: CONNECTOR_UNIQUE_NAME
+            value: '{{ .Values.configloader.CONNECTOR_UNIQUE_NAME }}'
+          - name: CONNECTOR_CONFIG_JSON
+            value: '{{ .Values.configloader.CONNECTOR_CONFIG_JSON }}'
+          - name: DATADOG_HOST
+            value: '{{ .Values.taskchecker.DATADOG_HOST }}'
+        resources:
+{{ toYaml .Values.kafka_connect.resources | indent 12 }}
+      restartPolicy: Always
+      hostname: {{ include "kafka-connect-helm.fullname" . }}
+status: {}

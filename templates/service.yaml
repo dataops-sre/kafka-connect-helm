@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kafka-connect-helm.fullname" . }}
+  labels:
+    app: {{ include "kafka-connect-helm.fullname" . }}
+    app.kubernetes.io/name: {{ include "kafka-connect-helm.fullname" . }}
+    helm.sh/chart: {{ include "kafka-connect-helm.chart" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+  - name: "kafka-connect"
+    port: 8083
+    targetPort: 8083
+  selector:
+    app: {{ include "kafka-connect-helm.fullname" . }}
+    app.kubernetes.io/name: {{ include "kafka-connect-helm.fullname" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}

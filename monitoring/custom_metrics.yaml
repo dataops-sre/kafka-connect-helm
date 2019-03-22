@@ -1,0 +1,93 @@
+{{- if .Values.datadog.autodiscovery }}
+instances:
+  - jmx_url: service:jmx:rmi:///jndi/rmi://%%host%%:9999/jmxrmi
+    name: {{ include "kafka-connect-helm.fullname" . }}
+    tags:
+    - kafka:connect
+    - env:{{ .Values.ENV }}
+    - app:{{ include "kafka-connect-helm.fullname" . }}
+{{- else }}
+instances:
+  - host: localhost
+    port: 9999
+    name: {{ include "kafka-connect-helm.fullname" . }}
+    tags:
+      kafka: connect
+      env: {{ .Values.ENV }}
+      app: {{ include "kafka-connect-helm.fullname" . }}
+{{- end }}
+logs:
+  - type: file
+    path: /var/log/kafka/server.log
+    source: kafka
+    sourcecategory: connect
+    service: {{ include "kafka-connect-helm.fullname" . }}
+    tags:
+    - env:{{ .Values.ENV }}
+    # REGEX has to match pattern in FILE not in CONSOLE
+    # The pattern used for FILE and CONSOLE may be different!!!
+    log_processing_rules:
+    - type: exclude_at_match
+      name: exclude_noise_for_committing_offsets
+      pattern: Committing offsets
+    - type: exclude_at_match
+      name: exclude_noise_for_empty_flushing
+      pattern: flushing 0 outstanding messages for offset commit
+    - type: multi_line
+      name: new_log_start_with_date
+      pattern: \d{4}\-(0?[1-9]|1[012])\-(0?[1-9]|[12][0-9]|3[01])\s\d{2}:\d{2}:\d{2}
+init_config:
+  is_jmx: true
+  collect_default_metrics: false
+  #lookup beans by jconsole, expose jmx from minikube : https://stackoverflow.com/questions/35184558/multiple-app-nodes-how-to-expose-jmx-in-kubernetes
+  conf:
+    - include:
+        bean_regex: kafka.connect:type=connect-metrics,client-id=([-.\w]+)
+        attribute:
+          incoming-byte-rate:
+            metric_type: gauge
+            alias: jmx.kafka.connect.incoming_byte_rate
+          outgoing-byte-rate:
+            metric_type: gauge
+            alias: jmx.kafka.connect.outgoing_byte_rate
+        exclude_tags:
+          - name
+    - include:
+        bean: kafka.connect:type=connect-worker-metrics
+        attribute:
+        #The metric type will be a gauge
+        #The metric name will be jmx.[DOMAIN_NAME].[ATTRIBUTE_NAME]
+          - connector-count
+          - connector-startup-attempts-total
+          - connector-startup-success-total
+          - connector-startup-success-percentage
+          - connector-startup-failure-total
+          - connector-startup-failure-percentage
+          - task-startup-attempts-total
+          - task-startup-success-total
+          - task-startup-success-percentage
+          - task-startup-failure-total
+          - task-startup-failure-percentage
+        exclude_tags:
+          - name
+    - include:
+        bean_regex: kafka.connect:type=connector-task-metrics,connector=([-.\w]+),task=([-.\w]+)
+        attribute:
+          offset-commit-avg-time-ms:
+            metric_type: rate
+            #alias: jmx.kafka.connect.task_metrics.offset_commit_avg_time_ms
+          batch-size-avg:
+            metric_type: rate
+            #alias: jmx.kafka.connect.task_metrics.batch_size_avg
+          running-ratio:
+            metric-type: rate
+          status: # The status of the connector task. One of 'unassigned', 'running', 'paused', 'failed', or 'destroyed'.
+            metric_type: gauge
+            values:
+              running: 0
+              unassigned: -1
+              paused: 1
+              failed: 2
+              destroyed: 3
+        exclude_tags:
+          - name

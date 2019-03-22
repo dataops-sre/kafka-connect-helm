@@ -1,0 +1,54 @@
+# Default values for kafka-connect-helm.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+ENV: local
+replicaCount: 1
+service:
+  type: ClusterIP
+KAFKA_BROKERS: broker:9092
+SCHEMA_REGISTRY_URL: http://kafka-schema-registry:8081
+ZOOKEEPERS: zookeeper:2181
+kafka_connect:
+  image:
+    repository: confluentinc/cp-kafka-connect
+    tag: 3.3.1
+    pullPolicy: IfNotPresent
+  CONNECT_GROUP_ID: kafka-connect
+  CONNECT_INTERNAL_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+  CONNECT_INTERNAL_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+  CONNECT_KEY_CONVERTER: io.confluent.connect.avro.AvroConverter
+  CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+  CONNECT_OFFSET_STORAGE_TOPIC: kafka-connect-offset
+  CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: '1'
+  CONNECT_CONFIG_STORAGE_TOPIC: kafka-connect-config
+  CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: '1'
+  CONNECT_STATUS_STORAGE_TOPIC: kafka-connect-status
+  CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: '1'
+  CONNECT_REST_PORT: "8083"
+  CONNECT_LOG4J_LOGGERS: org.reflections=INFO
+  CONNECT_LOG4J_ROOT_LOGLEVEL: INFO
+  CONNECT_TOOLS_LOG4J_LOGLEVEL: INFO
+  #Java/KAFKA options
+  KAFKA_JMX_PORT: '9999'
+  KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+taskchecker:
+  DATADOG_HOST: datadogstatsd
+configloader:
+  CONNECTOR_UNIQUE_NAME: "kafka-connect-${ENV}"
+  CONNECTOR_CONFIG_JSON: |
+    {
+    }
+datadog:
+  autodiscovery: true
+  enabled: true
+  image:
+    repository: datadog/agent
+    tag: latest-jmx
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "250m"

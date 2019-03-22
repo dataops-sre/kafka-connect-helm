@@ -1,0 +1,14 @@
+## Provides autodetected defaults, for kubernetes environments,
+## please see datadog.yaml.example for all supported options
+
+# Autodiscovery
+listeners:
+  - name: kubelet
+
+config_providers:
+# The kubelet provider handles templates embedded in pod annotations, see
+# https://docs.datadoghq.com/guides/autodiscovery/#template-source-kubernetes-pod-annotations
+  - name: kubelet
+    polling: true
+
+logs_enabled: true
